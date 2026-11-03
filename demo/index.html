@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>亲属关系计算器 · 同性婚姻支持版</title>
+<style>
+  :root {
+    --bg: #faf7f2; --card: #ffffff; --ink: #2b2620; --muted: #8a8075;
+    --accent: #a4442e; --accent2: #2e6f4e; --line: #e8e0d6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; line-height: 1.6; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(60,40,20,.05);
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; color: var(--accent); }
+  .hint { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; line-height: 1.6; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btns button {
+    min-width: 52px; padding: 9px 12px; font-size: 15px; border-radius: 9px;
+    border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink);
+    transition: all .12s;
+  }
+  .btns button:hover { border-color: var(--accent); color: var(--accent); background: #fdf3ef; }
+  .btns button.gen { background: #f7f3ec; font-weight: 600; }
+  .btns button.ctl { background: #f3ede4; }
+  .chain-box {
+    margin-top: 12px; border: 1px dashed var(--line); border-radius: 10px;
+    padding: 12px 14px; font-size: 17px; line-height: 1.9; min-height: 46px;
+    color: var(--muted); background: #fdfbf8;
+  }
+  .chain-box .tok { color: var(--ink); font-weight: 600; background: #f7f3ec; border-radius: 6px; padding: 1px 7px; margin: 0 1px; }
+  .chain-box .zh { color: var(--accent); }
+  .result-name {
+    font-size: 28px; font-weight: 700; color: var(--accent); line-height: 1.5;
+  }
+  .result-name .alt { font-size: 14px; font-weight: 400; color: var(--muted); margin-left: 10px; }
+  .kv { font-size: 13.5px; color: var(--muted); line-height: 1.8; }
+  .kv b { color: var(--ink); font-weight: 600; }
+  .note {
+    margin-top: 10px; font-size: 13px; color: var(--accent2);
+    background: #eef6f0; border-radius: 8px; padding: 8px 12px; line-height: 1.7;
+  }
+  .note.same-sex { background: #fdf1ea; color: var(--accent); }
+  .gender-row { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+  .gender-row label { cursor: pointer; font-size: 14.5px; }
+  .gender-row input { margin-right: 5px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .row select, .row input[type=text] {
+    padding: 7px 10px; font-size: 14px; border: 1px solid var(--line);
+    border-radius: 8px; background: #fff; color: var(--ink);
+  }
+  .row input[type=text] { width: 150px; }
+  .row select.person { min-width: 130px; }
+  .row select:disabled { background: #f3ede4; color: var(--muted); }
+  .var-item {
+    display: inline-flex; align-items: center; gap: 8px; background: #f7f3ec;
+    border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px;
+    margin: 0 8px 8px 0; font-size: 13.5px;
+  }
+  .var-item b { color: var(--accent); }
+  .var-item button { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+  .var-item button:hover { color: var(--accent); }
+  .examples { font-size: 13px; color: var(--muted); }
+  .examples a { color: var(--accent); text-decoration: none; cursor: pointer; margin-right: 12px; line-height: 2; }
+  .examples a:hover { text-decoration: underline; }
+  .big-btn {
+    padding: 9px 18px; font-size: 15px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  .big-btn:hover { opacity: .9; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 26px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>亲属关系计算器</h1>
+  <div class="sub">
+    基于亲属代数（P父·C子·M配偶·E兄姐·Y弟妹）的呼称计算。<b>支持同性婚姻</b>，
+    异性婚姻命名与 <code>python3-relationship</code> 库拟合（拟构世代前缀改用"曾/外曾"长链）。
+    可保存变量、计算任意两人之间的称呼。规则详见《亲属称谓命名方案.md》与《命名规则.md》。
+  </div>
+
+  <div class="card">
+    <h2>① 我的性别</h2>
+    <div class="gender-row">
+      <label><input type="radio" name="egoG" value="" checked> 无设置（涉及"我"的计算按男、女两种可能分别给出）</label>
+      <label><input type="radio" name="egoG" value="m"> 男</label>
+      <label><input type="radio" name="egoG" value="f"> 女</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 快速计算：我的某位亲属</h2>
+    <div class="btns" id="quickBtns">
+      <button class="gen" data-t="P" data-g="m">父</button>
+      <button class="gen" data-t="P" data-g="f">母</button>
+      <button class="gen" data-t="M" data-g="m">夫</button>
+      <button class="gen" data-t="M" data-g="f">妻</button>
+      <button class="gen" data-t="C" data-g="m">子</button>
+      <button class="gen" data-t="C" data-g="f">女</button>
+      <button class="gen" data-t="E" data-g="m">兄</button>
+      <button class="gen" data-t="E" data-g="f">姐</button>
+      <button class="gen" data-t="Y" data-g="m">弟</button>
+      <button class="gen" data-t="Y" data-g="f">妹</button>
+      <button class="ctl" id="quickUndo">撤销</button>
+      <button class="ctl" id="quickClear">清空</button>
+    </div>
+    <div class="chain-box" id="quickChain">（从上面的按钮开始点选，例如：父 → 母 → 兄）</div>
+    <div class="result-name" id="quickResult">—</div>
+    <div class="kv" id="quickMeta" style="display:none"></div>
+    <div class="note" id="quickNotes" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>③ 变量：保存一个人</h2>
+    <div class="hint">
+      填写名字，选择"相对于谁"，再点下面的按钮拼出关系链，最后按「保存变量」。
+      例如：名字填"堂哥"，相对于"我"，点 父 → 兄 → 子。
+      保存后，这个人在「④ 关系转换」里就可以当 A 或 B 使用。
+    </div>
+    <div class="row">
+      <span>名字</span>
+      <input type="text" id="varName" placeholder="例如：堂哥、妻子">
+      <span>相对于</span>
+      <select id="varBase"><option value="我">我</option></select>
+      <span class="kv">的关系链：</span>
+    </div>
+    <div class="btns" id="varBtns">
+      <button class="gen" data-t="P" data-g="m">父</button>
+      <button class="gen" data-t="P" data-g="f">母</button>
+      <button class="gen" data-t="M" data-g="m">夫</button>
+      <button class="gen" data-t="M" data-g="f">妻</button>
+      <button class="gen" data-t="C" data-g="m">子</button>
+      <button class="gen" data-t="C" data-g="f">女</button>
+      <button class="gen" data-t="E" data-g="m">兄</button>
+      <button class="gen" data-t="E" data-g="f">姐</button>
+      <button class="gen" data-t="Y" data-g="m">弟</button>
+      <button class="gen" data-t="Y" data-g="f">妹</button>
+      <button class="ctl" id="varUndo">撤销</button>
+      <button class="ctl" id="varClear">清空</button>
+    </div>
+    <div class="chain-box" id="varChain">（这里会显示：变量 ＝ 谁 的 关系链）</div>
+    <div class="row" style="margin-top:10px; margin-bottom:0">
+      <button class="big-btn" id="varSave">保存变量</button>
+      <span class="kv" id="varSaveHint"></span>
+    </div>
+    <div id="varList" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2>④ 关系转换：某人怎么称呼另一个人</h2>
+    <div class="hint">选择方向与两人，计算"称呼人"该如何称呼"被称呼人"。</div>
+    <div class="row">
+      <span>方向</span>
+      <select id="dir">
+        <option value="me2x">我 称呼 TA</option>
+        <option value="x2me">TA 称呼 我</option>
+        <option value="a2b">A 称呼 B</option>
+      </select>
+      <span class="kv" id="dirHint"></span>
+    </div>
+    <div class="row">
+      <select id="selA" class="person"></select>
+      <span>称呼</span>
+      <select id="selB" class="person"></select>
+      <button class="big-btn" id="relateBtn">计算</button>
+    </div>
+    <div class="result-name" id="relateResult">—</div>
+    <div class="kv" id="relateMeta" style="display:none"></div>
+    <div class="note" id="relateNotes" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>⑤ 试试这些</h2>
+    <div class="examples" id="examples"></div>
+  </div>
+
+  <footer>
+    引擎与命名规则为 <code>kinship_formula.py</code> 与 <code>naming.py</code> 的 JavaScript 移植
+    （demo/kinship.js）。同性婚姻的称谓为按"性别本位 + 类推"原则外推的规则化命名，
+    现实中两位妈妈/爸爸多以名字或"妈妈A / 妈妈B"区分。关系转换按"逆链 + 复合"
+    计算，歧义时列出全部可能。
+  </footer>
+</div>
+
+<script src="kinship.js"></script>
+<script>
+'use strict';
+
+/* ------------------------------ 状态 ------------------------------ */
+
+const state = {
+  quick: [],
+  varRel: [],
+  vars: new Map(),   // name -> { base: '我'|name, rel: [gens], full: [gens] }
+  lastRelate: null
+};
+
+const els = {
+  quickChain: document.getElementById('quickChain'),
+  quickResult: document.getElementById('quickResult'),
+  quickMeta: document.getElementById('quickMeta'),
+  quickNotes: document.getElementById('quickNotes'),
+  varChain: document.getElementById('varChain'),
+  varList: document.getElementById('varList'),
+  varBase: document.getElementById('varBase'),
+  varName: document.getElementById('varName'),
+  varSaveHint: document.getElementById('varSaveHint'),
+  dir: document.getElementById('dir'),
+  dirHint: document.getElementById('dirHint'),
+  selA: document.getElementById('selA'),
+  selB: document.getElementById('selB'),
+  relateResult: document.getElementById('relateResult'),
+  relateMeta: document.getElementById('relateMeta'),
+  relateNotes: document.getElementById('relateNotes'),
+  examples: document.getElementById('examples')
+};
+
+function egoGender() {
+  const v = document.querySelector('input[name=egoG]:checked').value;
+  return v === 'm' ? 'm' : v === 'f' ? 'f' : null;
+}
+function genderOf(chain) {
+  return chain.length ? chain[chain.length - 1].g : egoGender();
+}
+
+/* ------------------------------ 工具 ------------------------------ */
+
+function hanFor(g) { return CHAIN_HAN[g.t][g.g]; }
+
+function chainHTML(gens) {
+  if (!gens.length) return '';
+  return gens.map((g, i) =>
+    `<span class="tok">${hanFor(g)}</span>` +
+    (i < gens.length - 1 ? '<span class="zh">的</span>' : '')
+  ).join('');
+}
+
+function showQuickResult() {
+  if (!state.quick.length) {
+    els.quickChain.innerHTML = '（从上面的按钮开始点选，例如：父 → 母 → 兄）';
+    els.quickResult.textContent = '—';
+    els.quickMeta.style.display = 'none';
+    els.quickNotes.style.display = 'none';
+    return;
+  }
+  els.quickChain.innerHTML = chainHTML(state.quick);
+  const r = nameChain(state.quick);
+  els.quickResult.innerHTML = r.primary +
+    (r.entries.length === 1 && r.entries[0].alternatives.length
+      ? `<span class="alt">亦作：${r.entries[0].alternatives.join('、')}</span>` : '');
+  els.quickMeta.style.display = 'block';
+  els.quickMeta.innerHTML = `<b>关系链：</b>${r.chain}<br><b>化简公式：</b>${r.formula || '0'}`;
+  if (r.notes.length) {
+    els.quickNotes.style.display = 'block';
+    const sameSex = r.notes.some(n => n.indexOf('同性婚姻') === 0);
+    els.quickNotes.className = 'note' + (sameSex ? ' same-sex' : '');
+    els.quickNotes.innerHTML = r.notes.join('<br>');
+  } else {
+    els.quickNotes.style.display = 'none';
+  }
+}
+
+function showVarChain() {
+  const base = els.varBase.value;
+  const baseFull = base === '我' ? [] : (state.vars.get(base) || { full: [] }).full;
+  const all = baseFull.concat(state.varRel);
+  if (!all.length) {
+    els.varChain.innerHTML = '（这里会显示：变量 ＝ 谁 的 关系链）';
+  } else {
+    els.varChain.innerHTML =
+      `<span class="zh">${base === '我' ? '我' : base}</span><span class="zh">的</span>` +
+      chainHTML(state.varRel);
+  }
+  els.varSaveHint.textContent = state.varRel.length
+    ? `将保存：${els.varName.value.trim() || '（未填名字）'} ＝ ${base}的${state.varRel.map(hanFor).join('的')}`
+    : '（先点选关系链再保存）';
+}
+
+function refreshBaseAndPersons() {
+  // 变量基准下拉
+  const prevBase = els.varBase.value;
+  els.varBase.innerHTML = '<option value="我">我</option>';
+  for (const name of state.vars.keys()) {
+    const o = document.createElement('option');
+    o.value = name; o.textContent = name;
+    els.varBase.appendChild(o);
+  }
+  if (state.vars.has(prevBase)) els.varBase.value = prevBase;
+
+  // 人员下拉（A/B）
+  const fill = (sel) => {
+    const prev = sel.value;
+    sel.innerHTML = '<option value="我">我</option>';
+    for (const name of state.vars.keys()) {
+      const o = document.createElement('option');
+      o.value = name; o.textContent = name;
+      sel.appendChild(o);
+    }
+    if (state.vars.has(prev)) sel.value = prev;
+  };
+  fill(els.selA); fill(els.selB);
+  refreshDirUI();
+  renderVarList();
+}
+
+function renderVarList() {
+  if (!state.vars.size) {
+    els.varList.innerHTML = '<div class="kv">（暂无变量）</div>';
+    return;
+  }
+  els.varList.innerHTML = [...state.vars.entries()].map(([name, v]) =>
+    `<span class="var-item"><b>${name}</b> ＝ ${v.base === '我' ? '我' : v.base}的` +
+    chainHTML(v.rel) +
+    ` <span class="kv">（${chainToText(v.full) || '我'}）</span>` +
+    `<button data-del="${name}" title="删除">✕</button></span>`
+  ).join('');
+}
+
+function refreshDirUI() {
+  const d = els.dir.value;
+  if (d === 'me2x') {
+    els.selA.value = '我';
+    els.selA.disabled = true;
+    els.selB.disabled = false;
+  } else if (d === 'x2me') {
+    els.selB.value = '我';
+    els.selB.disabled = true;
+    els.selA.disabled = false;
+  } else {
+    els.selA.disabled = false;
+    els.selB.disabled = false;
+  }
+  els.dirHint.textContent = d === 'me2x'
+    ? '（"我"固定为称呼人，右侧选择对方）'
+    : d === 'x2me'
+      ? '（"我"固定为被称呼人，左侧选择对方）'
+      : '（左右两侧都可以选"我"或已保存的变量）';
+}
+
+function showRelateResult(r) {
+  els.relateResult.innerHTML = r.primary;
+  els.relateMeta.style.display = 'block';
+  els.relateMeta.innerHTML = `<b>关系链：</b>${r.chain || '（空）'}<br><b>化简公式：</b>${r.formula || '0'}`;
+  const notes = r.notes.slice();
+  if (egoGender() === null && r.ambiguous) {
+    notes.unshift('"我"的性别未设置：以上为按男、女两种可能合并的结果（若设置性别，结果将收窄）。');
+  }
+  if (notes.length) {
+    els.relateNotes.style.display = 'block';
+    const sameSex = notes.some(n => n.indexOf('同性婚姻') === 0);
+    els.relateNotes.className = 'note' + (sameSex ? ' same-sex' : '');
+    els.relateNotes.innerHTML = notes.join('<br>');
+  } else {
+    els.relateNotes.style.display = 'none';
+  }
+}
+
+function runRelate() {
+  const d = els.dir.value;
+  const nameA = els.selA.value, nameB = els.selB.value;
+  const fullA = nameA === '我' ? [] : (state.vars.get(nameA) || { full: [] }).full;
+  const fullB = nameB === '我' ? [] : (state.vars.get(nameB) || { full: [] }).full;
+  const ga = nameA === '我' ? egoGender() : genderOf(fullA);
+  let r;
+  if (d === 'me2x') r = relate([], fullB, egoGender(), null);
+  else if (d === 'x2me') r = relate(fullA, [], egoGender(), ga);
+  else r = relate(fullA, fullB, egoGender(), ga);
+  state.lastRelate = { d, nameA, nameB };
+  showRelateResult(r);
+}
+
+/* ------------------------------ 事件 ------------------------------ */
+
+document.querySelectorAll('input[name=egoG]').forEach(rd => {
+  rd.addEventListener('change', () => { if (state.lastRelate) runRelate(); });
+});
+
+function wireBuilder(btnsId, undoId, clearId, chainRef, display) {
+  document.querySelectorAll('#' + btnsId + ' button.gen').forEach(btn => {
+    btn.addEventListener('click', () => {
+      chainRef.push({ t: btn.dataset.t, g: btn.dataset.g });
+      display();
+    });
+  });
+  document.getElementById(undoId).addEventListener('click', () => { chainRef.pop(); display(); });
+  document.getElementById(clearId).addEventListener('click', () => { chainRef.length = 0; display(); });
+}
+wireBuilder('quickBtns', 'quickUndo', 'quickClear', state.quick, showQuickResult);
+wireBuilder('varBtns', 'varUndo', 'varClear', state.varRel, showVarChain);
+
+els.varBase.addEventListener('change', showVarChain);
+els.varName.addEventListener('input', showVarChain);
+
+document.getElementById('varSave').addEventListener('click', () => {
+  const name = els.varName.value.trim();
+  if (!name) { alert('请先输入变量名字'); els.varName.focus(); return; }
+  if (state.vars.has(name)) { alert('该名字已存在，请换一个'); return; }
+  if (!state.varRel.length) { alert('请先点选关系链（至少一位亲属）'); return; }
+  const base = els.varBase.value;
+  const baseFull = base === '我' ? [] : (state.vars.get(base) || { full: [] }).full;
+  state.vars.set(name, { base, rel: state.varRel.slice(), full: baseFull.concat(state.varRel) });
+  state.varRel.length = 0;
+  els.varName.value = '';
+  showVarChain();
+  refreshBaseAndPersons();
+});
+
+els.varList.addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-del]');
+  if (!b) return;
+  const name = b.dataset.del;
+  // 若其他变量以此为基准，一并删除
+  for (const [k, v] of state.vars) {
+    if (v.base === name) state.vars.delete(k);
+  }
+  state.vars.delete(name);
+  refreshBaseAndPersons();
+});
+
+els.dir.addEventListener('change', () => { refreshBaseAndPersons(); if (state.lastRelate) runRelate(); });
+els.selA.addEventListener('change', () => { if (state.lastRelate) runRelate(); });
+els.selB.addEventListener('change', () => { if (state.lastRelate) runRelate(); });
+document.getElementById('relateBtn').addEventListener('click', runRelate);
+
+/* ------------------------------ 示例 ------------------------------ */
+
+const T = (t, g) => ({ t, g });
+const examples = [
+  ['爸爸的妈妈', 'Pm,Pf'], ['妈妈的哥哥', 'Pf,Em'], ['爸爸的哥哥的儿子', 'Pm,Em,Cm'],
+  ['妻子的妈妈', 'Mf,Pf'], ['妻子的父亲的外婆', 'Mf,Pm,Pf,Pf'], ['老公的姐姐', 'Mm,Ef'],
+  ['儿子的女儿', 'Cm,Cf'], ['女儿的女儿的女儿', 'Cf,Cf,Cf'], ['曾祖父', 'Pm,Pm,Pm'],
+  ['曾曾外祖父', 'Pm,Pm,Pf,Pm'], ['妈妈的妻子（双母家庭）', 'Pf,Mf'],
+  ['爸爸的丈夫（双父家庭）', 'Pm,Mm'], ['妻子的妻子', 'Mf,Mf'],
+  ['哥哥的丈夫', 'Em,Mm'], ['姐姐的妻子', 'Ef,Mf'], ['儿子的丈夫', 'Cm,Mm'],
+  ['女儿的妻子', 'Cf,Mf'], ['伯父的丈夫', 'Pm,Em,Mm'],
+  ['母亲的妻子的母亲', 'Pf,Mf,Pf'], ['爸爸的哥哥的妻子', 'Pm,Em,Mf'],
+  ['外甥的女儿', 'Ef,Cm,Cf'], ['儿媳的父亲', 'Cm,Mf,Pm'], ['伯公', 'Pm,Pm,Em']
+];
+
+// 关系转换示例：一键定义变量并计算
+const relateExamples = [
+  ['爸爸称呼妈妈', () => {
+    state.vars.clear();
+    state.vars.set('爸爸', { base: '我', rel: [T('P', 'm')], full: [T('P', 'm')] });
+    state.vars.set('妈妈', { base: '我', rel: [T('P', 'f')], full: [T('P', 'f')] });
+    els.dir.value = 'a2b'; els.selA.value = '爸爸'; els.selB.value = '妈妈';
+  }],
+  ['堂哥称呼我', () => {
+    state.vars.clear();
+    state.vars.set('堂哥', { base: '我', rel: [T('P', 'm'), T('E', 'm'), T('C', 'm')],
+      full: [T('P', 'm'), T('E', 'm'), T('C', 'm')] });
+    els.dir.value = 'x2me'; els.selA.value = '堂哥';
+  }],
+  ['妻子称呼妈妈', () => {
+    state.vars.clear();
+    state.vars.set('妻子', { base: '我', rel: [T('M', 'f')], full: [T('M', 'f')] });
+    state.vars.set('妈妈', { base: '我', rel: [T('P', 'f')], full: [T('P', 'f')] });
+    els.dir.value = 'a2b'; els.selA.value = '妻子'; els.selB.value = '妈妈';
+  }],
+  ['堂哥称呼堂妹', () => {
+    state.vars.clear();
+    state.vars.set('堂哥', { base: '我', rel: [T('P', 'm'), T('E', 'm'), T('C', 'm')],
+      full: [T('P', 'm'), T('E', 'm'), T('C', 'm')] });
+    state.vars.set('堂妹', { base: '我', rel: [T('P', 'm'), T('E', 'm'), T('C', 'f')],
+      full: [T('P', 'm'), T('E', 'm'), T('C', 'f')] });
+    els.dir.value = 'a2b'; els.selA.value = '堂哥'; els.selB.value = '堂妹';
+  }]
+];
+
+els.examples.innerHTML =
+  '<div style="margin-bottom:6px">（快速计算）</div>' +
+  examples.map(e => `<a data-c="${e[1]}">${e[0]}</a>`).join('') +
+  '<div style="margin:10px 0 6px">（关系转换：一键建变量并计算）</div>' +
+  relateExamples.map((e, i) => `<a data-rel="${i}">${e[0]}</a>`).join('');
+
+els.examples.addEventListener('click', ev => {
+  const a = ev.target.closest('a');
+  if (!a) return;
+  if (a.dataset.c) {
+    state.quick.length = 0;
+    for (const tok of a.dataset.c.split(',')) {
+      state.quick.push(T(tok[0], tok[1]));
+    }
+    showQuickResult();
+    els.quickChain.scrollIntoView({ block: 'nearest' });
+  } else if (a.dataset.rel) {
+    relateExamples[+a.dataset.rel][1]();
+    refreshBaseAndPersons();
+    runRelate();
+    els.relateResult.scrollIntoView({ block: 'nearest' });
+  }
+});
+
+/* ------------------------------ 初始化 ------------------------------ */
+refreshBaseAndPersons();
+showVarChain();
+</script>
+</body>
+</html>
