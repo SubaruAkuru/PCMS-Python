@@ -42,7 +42,7 @@ CHILD = {MALE: '儿子', FEMALE: '女儿'}
 CHILD_ALTS = {MALE: ['儿', '子'], FEMALE: ['女']}
 
 SIB = {'E': {MALE: '哥哥', FEMALE: '姐姐'}, 'Y': {MALE: '弟弟', FEMALE: '妹妹'}}
-SIB_F = {'E': {MALE: '兄', FEMALE: '姐'}, 'Y': {MALE: '弟', FEMALE: '妹'}}
+SIB_F = {'E': {MALE: '兄', FEMALE: '姊'}, 'Y': {MALE: '弟', FEMALE: '妹'}}
 SIB_ALTS = {'E': {MALE: ['哥', '兄长'], FEMALE: ['姐', '姊']},
             'Y': {MALE: ['弟'], FEMALE: ['妹']}}
 
@@ -78,6 +78,43 @@ def _formal_descendant(gs):
         return '外孙' if gs[1] == MALE else '外孙女'
     prim, _ = name_descendants(list(gs))
     return prim
+
+
+def _formal_descendant_at(gen, gender):
+    """目标在绝对辈分 gen（gen <= -2）时的通用孙辈词（孙/孙女/曾孙…）。
+
+    只负责“辈分 + 性别”这一层；支系（外/堂表/眷姻）由段前缀负责。
+    用于重锚名的负辈分兜底，避免把 -2、-3 代目标错写成“父/母/孙”等。
+    """
+    if gen > -2:
+        raise ValueError('_formal_descendant_at expects gen <= -2')
+    return _formal_descendant([MALE] * (-gen - 1) + [gender])
+
+
+def _formal_descendant_seq_at(gen, seq):
+    """按目标绝对辈分 gen 截取/补齐性别序列，保留 Y 链里的“外”信息。"""
+    if gen > -2:
+        raise ValueError('_formal_descendant_seq_at expects gen <= -2')
+    need = -gen
+    if len(seq) < need:
+        seq = [MALE] * (need - len(seq)) + list(seq)
+    else:
+        seq = list(seq[-need:])
+    return _formal_descendant(seq)
+
+
+def _term_at_generation(gen, gender):
+    """绝对辈分 gen、性别 gender 的通用呼称（不含支系/眷姻前缀）。
+
+    用于兜底：只要辈分与性别正确，段前缀再补支系信息。
+    """
+    if gen == 0:
+        return '兄弟' if gender == MALE else '姊妹'
+    if gen == -1:
+        return '男' if gender == MALE else '女'
+    if gen <= -2:
+        return _formal_descendant_at(gen, gender)
+    return _formal_ancestor([MALE] * (gen - 1) + [gender])
 
 def name_ancestors(gs):
     """gs: 自"我"向上的性别序列（'m' 父 / 'f' 母）。返回 (主呼称, 备选列表)。
@@ -347,7 +384,7 @@ def name_uncle(pp, ey, eyg):
     anc = anc[:-1] + ('父' if eyg == MALE else '母')
     line = _mate_uncle_line(list(pp), ey, eyg)
     prim = line + anc
-    alts = [('伯叔' if eyg == MALE else '姑') + _formal_ancestor([g.gender for g in pp])]
+    alts = [('伯叔' if eyg == MALE else '姑') + anc]
     return prim, alts
 
 
@@ -813,14 +850,23 @@ def name_mate_first(mg, rest):
                             return ('夫' if mg == MALE else '妻') + seg + rname[0], \
                                 [('夫' if mg == MALE else '妻') + seg + a for a in rname[1]]
                         return ('夫' if mg == MALE else '妻') + seg + rname, []
+                # 重锚失败且 tail 不是“纯 C 链 + 末位 M”时，name_cousin_mate
+                # 无法处理（如 tail 以 M 开头）；直接按绝对辈分兜底。
+                if not (all(isinstance(g, Child) for g in tail[:-1])
+                        and isinstance(tail[-1], Mate)):
+                    tg = priority(KinMonomial(rest))
+                    return ('妻' if mg == FEMALE else '夫') + \
+                        _term_at_generation(tg, rest[-1].gender), []
             # 后面还有配偶：配偶之表亲的配偶（r<0 做终端插入，否则 夫/妻 + 配偶视角）
             base, _ = name_cousin_mate(list(rest[:k]), ey, eyg, tail[:-1], tail[-1].gender)
             if k > len(tail) - 1:
                 return _mate_ancestor_insert(base, mg), []
             return ('夫' if mg == MALE else '妻') + base, []
-    # 兜底：配偶之深支（岳/公 + 称谓）
-    inner, _ = name_km(rest)
-    return ('岳' if mg == FEMALE else '公') + inner, []
+    # 兜底：配偶之深支。用“妻/夫 + 目标绝对辈分词”，避免把 rest 的
+    # 相对辈分误当成绝对辈分（如 妻舅表外曾曾孙婿 这类错位）。
+    tg = priority(KinMonomial(rest))
+    tsex = rest[-1].gender
+    return ('妻' if mg == FEMALE else '夫') + _term_at_generation(tg, tsex), []
 
 
 # ----------------------------------------------------------------------------
@@ -957,22 +1003,39 @@ def name_mate_last(mg, X):
     if n == 3 and isinstance(X[0], Child) and isinstance(X[1], Mate) \
             and isinstance(X[2], (Elder, Younger)):
         return ('姻侄媳' if mg == FEMALE else '姻侄婿'), []
-    # 姻侄孙妇/女姻孙妇 等：段前缀 + 重锚（X 以 Child 开头且内含 Mate）
-    if n >= 2 and isinstance(X[0], Child) and any(isinstance(g, Mate) for g in X):
+    # 段前缀 + 重锚：X 内含 Mate（不限 X 的首段类型）
+    # 例：父之母之姐之妻之兄 + 妻 → 段前缀“姨祖眷” + 重锚“舅祖母”
+    if n >= 2 and any(isinstance(g, Mate) for g in X):
         ti = next(i for i, g in enumerate(X) if isinstance(g, Mate))
-        seg = _inlaw_segment_prefix(X[:ti], X[ti].gender)
-        if seg:
-            s = priority(KinMonomial(X[:ti]))
-            rname = _inlaw_rest_name(X[ti].gender, s, X[ti + 1:] + [Mate(mg)])
-            if rname:
-                if isinstance(rname, tuple):
-                    return seg + rname[0], [seg + a for a in rname[1]]
-                return seg + rname, []
+        if 0 < ti < n - 1:
+            seg = _inlaw_segment_prefix(X[:ti], X[ti].gender)
+            if seg:
+                s = priority(KinMonomial(X[:ti]))
+                rname = _inlaw_rest_name(X[ti].gender, s, X[ti + 1:] + [Mate(mg)])
+                if rname:
+                    if isinstance(rname, tuple):
+                        return seg + rname[0], [seg + a for a in rname[1]]
+                    return seg + rname, []
     # 泛化：按 X 末位性别套用 媳/婿/妇 后缀（用于 舅侄媳妇/侄姻妇 等复合姻亲链）
     prim, alts = name_km(X)
     if prim.endswith(('兄', '弟', '姐', '妹', '姊')):
         return (prim + ('妇' if mg == FEMALE else '婿'),
                 [a + ('妇' if mg == FEMALE else '婿') for a in alts if a != prim])
+    # 口语兄弟姐妹词 + 配偶：用“嫂子/弟媳/姐夫/妹夫”等替换，
+    # 而不是“哥哥媳妇/姐姐婿”这种机械拼接（仅段前缀分支不适用时的兜底）。
+    _COLLOQUIAL_SIB = {'哥哥': ('E', MALE), '姐姐': ('E', FEMALE),
+                       '弟弟': ('Y', MALE), '妹妹': ('Y', FEMALE)}
+    for _sib, (_ey, _eyg) in _COLLOQUIAL_SIB.items():
+        if prim.endswith(_sib):
+            _sm, _salts = name_sibling_mate(_ey, _eyg, mg)
+            _stem = prim[:-len(_sib)]
+            _out = [_stem + a for a in _salts]
+            for a in alts:
+                if a == prim:
+                    continue
+                _out.append(_stem + _sm if a.endswith(_sib)
+                            else a + ('妇' if mg == FEMALE else '婿'))
+            return _stem + _sm, list(dict.fromkeys(_out))
     if prim.endswith('父'):
         return prim[:-1] + ('父' if mg == MALE else '母'), \
             [a[:-1] + ('父' if mg == MALE else '母') for a in alts if a != prim]
@@ -983,9 +1046,17 @@ def name_mate_last(mg, X):
             and prim.endswith(('侄女', '甥女')):
         return (prim + ('婿' if mg == MALE else '媳')), []
     if prim.endswith('男'):
-        return (prim[:-1] + ('妇' if mg == FEMALE else '婿')), []
+        base = prim[:-1]
+        # 只有“孙/侄/甥…”这类本身带辈分的词才能省掉“男”；
+        # “叔男/姑男”省掉后只剩“叔/姑”，会被读成 +1 辈。
+        if base.endswith(('孙', '侄', '甥', '子', '女')):
+            prim = base
+        return (prim + ('妇' if mg == FEMALE else '婿')), []
     if prim.endswith('女'):
-        return (prim[:-1] + ('婿' if mg == MALE else '媳')), []
+        base = prim[:-1]
+        if base.endswith(('孙', '侄', '甥', '子', '女')):
+            prim = base
+        return (prim + ('婿' if mg == MALE else '媳')), []
     if X[-1].gender == MALE:
         return (prim + '媳妇' if mg == FEMALE else prim + '婿'), []
     return (prim + '婿' if mg == MALE else prim + '媳'), []
@@ -1005,47 +1076,38 @@ def _inlaw_segment_prefix(X, mg):
     if n == 1:
         x = X[0]
         if isinstance(x, Child):
-            if x.gender == MALE and mg == FEMALE:
-                return '男眷'
-            if x.gender == FEMALE and mg == MALE:
-                return '女姻'
+            # 男/女 取 X 的性别，眷/姻 取配偶性别（同性婚姻同样适用）
+            return ('男' if x.gender == MALE else '女') + \
+                ('眷' if mg == FEMALE else '姻')
         if isinstance(x, (Elder, Younger)):
-            if mg == FEMALE:
-                return '兄弟眷'
-            if mg == MALE:
-                return '姊妹姻'
+            return ('兄弟' if x.gender == MALE else '姊妹') + \
+                ('眷' if mg == FEMALE else '姻')
         return None
     if n == 2:
         a, b = X
         if isinstance(a, Child) and isinstance(b, Child):
-            return {(MALE, MALE, FEMALE): '孙眷', (MALE, FEMALE, MALE): '孙姻',
-                    (FEMALE, MALE, FEMALE): '外孙眷',
-                    (FEMALE, FEMALE, MALE): '外孙姻'}.get((a.gender, b.gender, mg))
+            return ('孙' if a.gender == MALE else '外孙') + \
+                ('眷' if mg == FEMALE else '姻')
         if isinstance(a, (Elder, Younger)) and isinstance(b, Child):
-            return {(MALE, MALE, FEMALE): '侄眷', (MALE, FEMALE, MALE): '侄姻',
-                    (FEMALE, MALE, FEMALE): '甥眷',
-                    (FEMALE, FEMALE, MALE): '甥姻'}.get((a.gender, b.gender, mg))
+            return ('侄' if a.gender == MALE else '甥') + \
+                ('眷' if mg == FEMALE else '姻')
         if isinstance(a, Parent) and isinstance(b, (Elder, Younger)):
-            return {(MALE, MALE, FEMALE): '叔眷', (FEMALE, MALE, FEMALE): '舅眷',
-                    (MALE, FEMALE, MALE): '姑姻',
-                    (FEMALE, FEMALE, MALE): '姨姻'}.get((a.gender, b.gender, mg))
+            base = {(MALE, MALE): '叔', (FEMALE, MALE): '舅',
+                    (MALE, FEMALE): '姑', (FEMALE, FEMALE): '姨'}[(a.gender, b.gender)]
+            return base + ('眷' if mg == FEMALE else '姻')
         if isinstance(a, Mate) and isinstance(b, (Elder, Younger)):
-            return {(FEMALE, MALE, FEMALE): '舅兄弟眷', (FEMALE, FEMALE, MALE): '姨姊妹姻',
-                    (MALE, MALE, FEMALE): '叔兄弟眷',
-                    (MALE, FEMALE, MALE): '姑姊妹姻'}.get((a.gender, b.gender, mg))
+            base = {(MALE, MALE): '叔兄弟', (FEMALE, MALE): '舅兄弟',
+                    (MALE, FEMALE): '姑姊妹', (FEMALE, FEMALE): '姨姊妹'}[(a.gender, b.gender)]
+            return base + ('眷' if mg == FEMALE else '姻')
         return None
     if n == 3 and isinstance(X[0], Parent) and isinstance(X[1], Parent) \
             and isinstance(X[2], (Elder, Younger)):
         g1, g2, eyg = X[0].gender, X[1].gender, X[2].gender
-        table = {(MALE, MALE, MALE): '叔祖眷' if mg == FEMALE else None,
-                 (MALE, MALE, FEMALE): None if mg == FEMALE else '姑祖姻',
-                 (MALE, FEMALE, MALE): '舅祖眷' if mg == FEMALE else None,
-                 (MALE, FEMALE, FEMALE): None if mg == FEMALE else '姨祖姻',
-                 (FEMALE, MALE, MALE): '叔外祖眷' if mg == FEMALE else None,
-                 (FEMALE, MALE, FEMALE): None if mg == FEMALE else '姑外祖姻',
-                 (FEMALE, FEMALE, MALE): '舅外祖眷' if mg == FEMALE else None,
-                 (FEMALE, FEMALE, FEMALE): None if mg == FEMALE else '姨外祖姻'}
-        return table.get((g1, g2, eyg))
+        base = {(MALE, MALE, MALE): '叔祖', (MALE, MALE, FEMALE): '姑祖',
+                (MALE, FEMALE, MALE): '舅祖', (MALE, FEMALE, FEMALE): '姨祖',
+                (FEMALE, MALE, MALE): '叔外祖', (FEMALE, MALE, FEMALE): '姑外祖',
+                (FEMALE, FEMALE, MALE): '舅外祖', (FEMALE, FEMALE, FEMALE): '姨外祖'}[(g1, g2, eyg)]
+        return base + ('眷' if mg == FEMALE else '姻')
     if n >= 3 and isinstance(X[0], Parent) and isinstance(X[1], (Elder, Younger)) \
             and all(isinstance(x, Child) for x in X[2:]):
         g1, eyg = X[0].gender, X[1].gender
@@ -1177,10 +1239,13 @@ def _inlaw_rest_name(mate_g, s, rest):
         suf = '妇' if rest[-1].gender == FEMALE else '婿'
 
         def _app(b):
-            if b.endswith('女'):
-                return b[:-1] + suf
-            if b.endswith('男'):
-                return b[:-1] + suf
+            if b.endswith('女') or b.endswith('男'):
+                base = b[:-1]
+                # 只有基词本身带辈分（孙/侄/甥…）时才去掉男/女；
+                # 叔/伯/舅/姑/姨 单独不表辈分，保留男/女以免被读成 +1 辈。
+                if base.endswith(('孙', '侄', '甥', '子', '女')):
+                    return base + suf
+                return b + suf
             if b.endswith(('兄', '弟', '姊', '妹', '兄弟', '姊妹')):
                 return b + ('妇' if rest[-1].gender == FEMALE else '婿')
             if b.endswith('父'):
@@ -1192,6 +1257,28 @@ def _inlaw_rest_name(mate_g, s, rest):
         if isinstance(raw, tuple):
             return _app(raw[0]), [_app(a) for a in raw[1]]
         return _app(raw)
+    # ---- 余链中还有配偶（嵌套姻亲）----
+    # Y = Y1 + M(g2) + Y2：先把 Y1 段按段前缀命名，再以 M(g2) 为新锚点
+    # 递归命名 Y2。s 是"本层配偶"的辈分，Y1 的辈分偏移为 priority(Y1)，
+    # 故新锚点辈分 s2 = s + priority(Y1)，目标最终辈分 = s + priority(Y)。
+    # 这样末位呼称的辈分始终等于目标的绝对辈分，不会把内层配偶的
+    # 祖先链误当成相对第一层配偶的偏移（旧实现会落到 9.5 兜底并把
+    # 内层名字整体当成 Y 的名字，导致辈分/性别错位）。
+    _mpos = [i for i, g in enumerate(rest) if isinstance(g, Mate)]
+    if _mpos:
+        ti = _mpos[0]
+        X2 = list(rest[:ti])
+        mg2 = rest[ti].gender
+        Y2 = list(rest[ti + 1:])
+        if X2:
+            seg2 = _inlaw_segment_prefix(X2, mg2)
+            if seg2:
+                s2 = s + priority(KinMonomial(X2))
+                rname2 = _inlaw_rest_name(mg2, s2, Y2)
+                if rname2:
+                    if isinstance(rname2, tuple):
+                        return seg2 + rname2[0], [seg2 + a for a in rname2[1]]
+                    return seg2 + rname2
     # ---- 直系祖先余链 ----
     if all(isinstance(g, Parent) for g in rest):
         gs = [g.gender for g in rest]
@@ -1206,7 +1293,7 @@ def _inlaw_rest_name(mate_g, s, rest):
                 return '兄弟' if gs[-1] == MALE else '姊妹'
             if gen == -1:
                 return '男' if gs[-1] == MALE else '女'
-            return _formal_ancestor(gs)
+            return _formal_descendant_at(gen, gs[-1])
         return _formal_ancestor(gs[drop:])
     # ---- 配偶的兄弟姐妹（裸 E/Y）----
     if len(rest) == 1 and isinstance(rest[0], (Elder, Younger)):
@@ -1232,7 +1319,9 @@ def _inlaw_rest_name(mate_g, s, rest):
         if gen <= -3:
             return '曾' * (-gen - 2) + '孙' + ('男' if eyg == MALE else '女')
         if gen >= 3:
-            base = _formal_ancestor([MALE] * (gen - 1))
+            # 目标在原辈分 gen 上：祖名长度应为 gen（旧实现用 gen-1，
+            # 且末字固定为"父"，导致高一辈的目标被降一辈并变成男性）。
+            base = _formal_ancestor([MALE] * (gen - 1) + [eyg])
             if mate_g == FEMALE:
                 return '舅' + base if eyg == MALE else '姨' + base
             return '叔' + base if eyg == MALE else '姑' + base
@@ -1253,6 +1342,8 @@ def _inlaw_rest_name(mate_g, s, rest):
         if gen == -1:
             flav = ('叔' if fg == MALE else '舅') if eyg == MALE else ('姑' if fg == MALE else '姨')
             return flav + ('男' if eyg == MALE else '女'), []
+        if gen <= -2:
+            return _formal_descendant_at(gen, eyg), []
         if gen == 1:
             table = {(MALE, 'E', MALE): '伯父', (MALE, 'Y', MALE): '叔父',
                      (MALE, 'E', FEMALE): '姑母', (MALE, 'Y', FEMALE): '姑母',
@@ -1272,10 +1363,14 @@ def _inlaw_rest_name(mate_g, s, rest):
                     '叔' if fg == MALE and eyg == MALE else
                     '姑' if fg == MALE else
                     '舅' if eyg == MALE else '姨')
-            base_gs = ([mate_g] if s >= 1 else []) + [g.gender for g in pp]
-            anc = _formal_ancestor(base_gs)
-            anc = anc[:-1] + ('父' if eyg == MALE else '母')
-            return flav + anc, []
+            # 目标在绝对辈分 gen 上：性别序列长度必须为 gen。
+            # s>=1 时配偶及未知的 s-1 代用 mate_g/男补足；s<=0 时取 pp 的末 gen 代。
+            if s >= 1:
+                seq = [mate_g] + [MALE] * (s - 1) + [g.gender for g in pp]
+            else:
+                seq = [g.gender for g in pp][-gen:]
+            seq = seq[:-1] + [eyg]
+            return flav + _formal_ancestor(seq), []
         return ''
     # ---- 配偶兄弟姐妹的子女（E/Y + C^j）----
     if isinstance(rest[0], (Elder, Younger)) \
@@ -1310,12 +1405,13 @@ def _inlaw_rest_name(mate_g, s, rest):
         if gen == -1:
             return '男' if cg == MALE else '女'
         if gen <= -2:
-            desc = _formal_descendant([eyg] + [g.gender for g in rest[1:]])
+            seq = [eyg] + [g.gender for g in rest[1:]]
+            desc = _formal_descendant_seq_at(gen, seq)
             return desc, [desc + '男'] if cg == MALE else []
         if gen >= 2:
             line = ('舅表' if mate_g == FEMALE else '叔表') if eyg == MALE \
                 else ('姨表' if mate_g == FEMALE else '姑表')
-            lv = _formal_ancestor([MALE] * (gen - 1))[:-1]     # 祖/曾祖…
+            lv = _formal_ancestor([MALE] * gen)[:-1]           # 祖/曾祖…（目标在第 gen 代）
             if cg == MALE:
                 return line + '伯叔' + lv + '父', \
                     [line + '伯' + lv + '父', line + '叔' + lv + '父']
@@ -1339,6 +1435,9 @@ def _inlaw_rest_name(mate_g, s, rest):
         if gen == -1:
             flav = ('叔' if fg == MALE else '舅') if eyg == MALE else ('姑' if fg == MALE else '姨')
             return flav + ('男' if cg == MALE else '女')
+        if gen <= -2:
+            seq = [eyg] + [g.gender for g in rest[2:]]
+            return _formal_descendant_seq_at(gen, seq)
         if gen == 1:
             if mate_g == FEMALE:
                 return '堂舅父' if cg == MALE else '堂姨母'
@@ -1348,7 +1447,7 @@ def _inlaw_rest_name(mate_g, s, rest):
         if gen >= 2:
             line = {(MALE, MALE): '叔表', (MALE, FEMALE): '姑表',
                     (FEMALE, MALE): '舅表', (FEMALE, FEMALE): '姨表'}[(fg, eyg)]
-            lv = _formal_ancestor([MALE] * (gen - 1))[:-1]
+            lv = _formal_ancestor([MALE] * gen)[:-1]
             if cg == MALE:
                 return line + '伯叔' + lv + '父', \
                     [line + '伯' + lv + '父', line + '叔' + lv + '父']
@@ -1377,17 +1476,15 @@ def name_mate_middle(gens, i, mg):
             and isinstance(Y[0], (Elder, Younger)) and isinstance(Y[1], Mate):
         return ('姻侄媳' if Y[1].gender == FEMALE else '姻侄婿'), []
     # 姻/眷 体系
+    s = priority(KinMonomial(X))
     seg = _inlaw_segment_prefix(X, mg)
-    if seg:
-        s = priority(KinMonomial(X))
-        rname = _inlaw_rest_name(mg, s, Y)
-        if rname:
-            if isinstance(rname, tuple):
-                return seg + rname[0], [seg + a for a in rname[1]]
-            return seg + rname, []
+    rname = _inlaw_rest_name(mg, s, Y)
+    if seg and rname:
+        if isinstance(rname, tuple):
+            return seg + rname[0], [seg + a for a in rname[1]]
+        return seg + rname, []
     # 兜底：以"段词干 + 眷/姻 + 重锚"表达（A之B 不再出现）
     prim_x, _ = name_mate_last(mg, X)
-    prim_y, _ = name_km(Y)
     stem = prim_x
     for suf in ('媳妇', '女婿', '之夫', '之妻'):
         if stem.endswith(suf):
@@ -1398,7 +1495,15 @@ def name_mate_middle(gens, i, mg):
             if stem.endswith(suf):
                 stem = stem[:-1]
                 break
-    return stem + ('眷' if mg == FEMALE else '姻') + prim_y, []
+    prefix = stem + ('眷' if mg == FEMALE else '姻')
+    # 优先用重锚名（已经是目标的绝对辈分）
+    if rname:
+        if isinstance(rname, tuple):
+            return prefix + rname[0], [prefix + a for a in rname[1]]
+        return prefix + rname, []
+    # 最后兜底：按 s + Y 的辈分取通用词，保证辈分/性别不再错位
+    tg = s + priority(KinMonomial(Y))
+    return prefix + _term_at_generation(tg, Y[-1].gender), []
 
 
 # ----------------------------------------------------------------------------
@@ -1471,8 +1576,9 @@ def naming_full(formula):
             if km.is_zero:
                 continue
             prim, alts = name_km(km.generator_list)
+            alts = [x for x in _alt_combine(prim, alts) if x != prim]
             entry = {'monomial': km.expression, 'primary': prim,
-                     'alternatives': list(alts or [])}
+                     'alternatives': alts}
             if entry not in out:
                 out.append(entry)
         return out
@@ -1480,8 +1586,9 @@ def naming_full(formula):
         if formula.is_zero:
             return []
         prim, alts = name_km(formula.generator_list)
+        alts = [x for x in _alt_combine(prim, alts) if x != prim]
         return [{'monomial': formula.expression, 'primary': prim,
-                 'alternatives': list(alts or [])}]
+                 'alternatives': alts}]
     raise TypeError('naming() expects KinMonomial or KinPolynomial.')
 
 
@@ -1554,7 +1661,8 @@ def name_chain(gens):
     entries = naming_full(formula)
     if not entries and formula.is_zero:
         return {'chain': chain_to_text(gens), 'formula': repr(formula),
-                'names': [], 'primary': '无（此关系不成立）', 'notes': notes}
+                'names': [], 'primary': '无（此关系不成立）',
+                'notes': ['关系链化简为 0：链路内的性别相互矛盾，此关系不成立。']}
     primary = ' / '.join(dict.fromkeys(e['primary'] for e in entries))
     return {'chain': chain_to_text(gens), 'formula': repr(formula),
             'names': entries, 'primary': primary, 'notes': notes}
@@ -1631,7 +1739,7 @@ def _name_relate_g(chain_a, chain_b, ego_gender, gender_a):
             continue
         seen.add(prim)
         entries.append({'monomial': km.expression, 'primary': prim,
-                        'alternatives': alts})
+                        'alternatives': [x for x in _alt_combine(prim, alts) if x != prim]})
     if not entries and formula.is_zero:
         return {'chain': chain_to_text(full), 'formula': repr(formula),
                 'names': [], 'primary': '无（此关系不成立）', 'notes': []}

@@ -110,6 +110,27 @@ function formalDescendant(gs) {
   return nameDescendants(gs).primary;
 }
 
+function formalDescendantAt(gen, gender) {
+  if (gen > -2) throw new Error('formalDescendantAt expects gen <= -2');
+  return formalDescendant(Array(-gen - 1).fill('m').concat([gender]));
+}
+
+function formalDescendantSeqAt(gen, seq) {
+  if (gen > -2) throw new Error('formalDescendantSeqAt expects gen <= -2');
+  const need = -gen;
+  let s = seq.slice();
+  if (s.length < need) s = Array(need - s.length).fill('m').concat(s);
+  else s = s.slice(s.length - need);
+  return formalDescendant(s);
+}
+
+function termAtGeneration(gen, gender) {
+  if (gen === 0) return gender === 'm' ? '兄弟' : '姊妹';
+  if (gen === -1) return gender === 'm' ? '男' : '女';
+  if (gen <= -2) return formalDescendantAt(gen, gender);
+  return formalAncestor(Array(gen - 1).fill('m').concat([gender]));
+}
+
 /* ------------------------------ 直系祖辈 ------------------------------ */
 
 function nameAncestors(gs) {
@@ -208,7 +229,8 @@ function nameUncle(pp, ey, eyg) {
   }
   const anc = formalAncestor(pp.map(g => g.g)).slice(0, -1) + (eyg === 'm' ? '父' : '母');
   const line = mateUncleLine(pp, ey, eyg);
-  const alts = [(eyg === 'm' ? '伯叔' : '姑') + formalAncestor(pp.map(g => g.g))];
+  // 备选名的末字必须与目标性别一致（不能给女性目标配"姑曾祖父"）
+  const alts = [(eyg === 'm' ? '伯叔' : '姑') + anc];
   return { primary: line + anc, alts };
 }
 
@@ -515,47 +537,34 @@ function mateAncestorInsert(base, mg) {
 /* 眷/姻 段前缀 */
 function inlawSegmentPrefix(X, mg) {
   const n = X.length;
+  const suf = mg === 'f' ? '眷' : '姻';
   if (n === 1) {
     const x = X[0];
-    if (x.t === 'C') {
-      if (x.g === 'm' && mg === 'f') return '男眷';
-      if (x.g === 'f' && mg === 'm') return '女姻';
-    }
-    if (x.t === 'E' || x.t === 'Y') {
-      if (mg === 'f') return '兄弟眷';
-      if (mg === 'm') return '姊妹姻';
-    }
+    if (x.t === 'C') return (x.g === 'm' ? '男' : '女') + suf;
+    if (x.t === 'E' || x.t === 'Y') return (x.g === 'm' ? '兄弟' : '姊妹') + suf;
     return null;
   }
   if (n === 2) {
     const a = X[0], b = X[1];
-    if (a.t === 'C' && b.t === 'C') {
-      const t = { 'm,m,f': '孙眷', 'm,f,m': '孙姻', 'f,m,f': '外孙眷', 'f,f,m': '外孙姻' };
-      return t[a.g + ',' + b.g + ',' + mg] || null;
-    }
-    if ((a.t === 'E' || a.t === 'Y') && b.t === 'C') {
-      const t = { 'm,m,f': '侄眷', 'm,f,m': '侄姻', 'f,m,f': '甥眷', 'f,f,m': '甥姻' };
-      return t[a.g + ',' + b.g + ',' + mg] || null;
-    }
+    if (a.t === 'C' && b.t === 'C') return (a.g === 'm' ? '孙' : '外孙') + suf;
+    if ((a.t === 'E' || a.t === 'Y') && b.t === 'C') return (a.g === 'm' ? '侄' : '甥') + suf;
     if (a.t === 'P' && (b.t === 'E' || b.t === 'Y')) {
-      const t = { 'm,m,f': '叔眷', 'f,m,f': '舅眷', 'm,f,m': '姑姻', 'f,f,m': '姨姻' };
-      return t[a.g + ',' + b.g + ',' + mg] || null;
+      const base = { 'm,m': '叔', 'f,m': '舅', 'm,f': '姑', 'f,f': '姨' }[a.g + ',' + b.g];
+      return base + suf;
     }
     if (a.t === 'M' && (b.t === 'E' || b.t === 'Y')) {
-      const t = { 'f,m,f': '舅兄弟眷', 'f,f,m': '姨姊妹姻', 'm,m,f': '叔兄弟眷', 'm,f,m': '姑姊妹姻' };
-      return t[a.g + ',' + b.g + ',' + mg] || null;
+      const base = { 'm,m': '叔兄弟', 'f,m': '舅兄弟', 'm,f': '姑姊妹', 'f,f': '姨姊妹' }[a.g + ',' + b.g];
+      return base + suf;
     }
     return null;
   }
   if (n === 3 && X[0].t === 'P' && X[1].t === 'P' && (X[2].t === 'E' || X[2].t === 'Y')) {
     const key = X[0].g + ',' + X[1].g + ',' + X[2].g;
-    const t = {
-      'm,m,m': mg === 'f' ? '叔祖眷' : null, 'm,m,f': mg === 'm' ? '姑祖姻' : null,
-      'm,f,m': mg === 'f' ? '舅祖眷' : null, 'm,f,f': mg === 'm' ? '姨祖姻' : null,
-      'f,m,m': mg === 'f' ? '叔外祖眷' : null, 'f,m,f': mg === 'm' ? '姑外祖姻' : null,
-      'f,f,m': mg === 'f' ? '舅外祖眷' : null, 'f,f,f': mg === 'm' ? '姨外祖姻' : null
-    };
-    return t[key] || null;
+    const base = {
+      'm,m,m': '叔祖', 'm,m,f': '姑祖', 'm,f,m': '舅祖', 'm,f,f': '姨祖',
+      'f,m,m': '叔外祖', 'f,m,f': '姑外祖', 'f,f,m': '舅外祖', 'f,f,f': '姨外祖'
+    }[key];
+    return base + suf;
   }
   if (n >= 3 && X[0].t === 'P' && (X[1].t === 'E' || X[1].t === 'Y') && X.slice(2).every(x => x.t === 'C')) {
     const g1 = X[0].g, eyg = X[1].g;
@@ -665,8 +674,13 @@ function inlawRestName(mateG, s, rest) {
     const m2 = rest[rest.length - 1].g;
     const suf = m2 === 'f' ? '妇' : '婿';
     const app = b => {
-      if (b.endsWith('女')) return b.slice(0, -1) + suf;
-      if (b.endsWith('男')) return b.slice(0, -1) + suf;
+      if (b.endsWith('女') || b.endsWith('男')) {
+        const base = b.slice(0, -1);
+        // 只有基词本身带辈分（孙/侄/甥…）时才去掉男/女；
+        // 叔/伯/舅/姑/姨 单独不表辈分，保留男/女以免被读成 +1 辈。
+        if (/[\u5b59\u4f84\u7525\u5b50\u5973]$/.test(base)) return base + suf;
+        return b + suf;
+      }
       if (/[\u5144\u5f1f\u59ca\u59b9]$/.test(b)) return b + (m2 === 'f' ? '妇' : '婿');
       if (b.endsWith('父')) return b.slice(0, -1) + (m2 === 'm' ? '父' : '母');
       if (b.endsWith('母')) return b.slice(0, -1) + (m2 === 'm' ? '父' : '母');
@@ -674,6 +688,25 @@ function inlawRestName(mateG, s, rest) {
     };
     if (typeof raw === 'object' && raw !== null) return { primary: app(raw.primary), alts: raw.alts.map(app) };
     return app(raw);
+  }
+  // 余链中还有配偶（嵌套姻亲）：Y = Y1 + M(g2) + Y2。
+  // 先把 Y1 段按段前缀命名，再以 M(g2) 为新锚点递归命名 Y2；
+  // 新锚点辈分 s2 = s + priorityOf(Y1)，保证末位呼称的辈分
+  // 始终等于目标的绝对辈分（旧实现落到兜底，内层名字整体被当作 Y 的名字）。
+  const mi = rest.findIndex(g => g.t === 'M');
+  if (mi > 0 && mi < rest.length - 1) {
+    const X2 = rest.slice(0, mi), mg2 = rest[mi].g, Y2 = rest.slice(mi + 1);
+    const seg2 = inlawSegmentPrefix(X2, mg2);
+    if (seg2) {
+      const s2 = s + priorityOf(X2);
+      const r2 = inlawRestName(mg2, s2, Y2);
+      if (r2) {
+        if (typeof r2 === 'object' && r2 !== null) {
+          return { primary: seg2 + r2.primary, alts: r2.alts.map(a => seg2 + a) };
+        }
+        return seg2 + r2;
+      }
+    }
   }
   if (rest.every(g => g.t === 'P')) {
     const gs = rest.map(g => g.g);
@@ -684,7 +717,7 @@ function inlawRestName(mateG, s, rest) {
       const gen = s + gs.length;
       if (gen === 0) return gs[gs.length - 1] === 'm' ? '兄弟' : '姊妹';
       if (gen === -1) return gs[gs.length - 1] === 'm' ? '男' : '女';
-      return formalAncestor(gs);
+      return formalDescendantAt(gen, gs[gs.length - 1]);
     }
     return formalAncestor(gs.slice(drop));
   }
@@ -704,7 +737,9 @@ function inlawRestName(mateG, s, rest) {
     if (gen === -2) return eyg === 'm' ? '孙男' : '孙女';
     if (gen <= -3) return '曾'.repeat(-gen - 2) + '孙' + (eyg === 'm' ? '男' : '女');
     if (gen >= 3) {
-      const base = formalAncestor(Array(gen - 1).fill('m'));
+      // 目标在原辈分 gen 上：祖名长度应为 gen（旧实现用 gen-1，
+      // 且末字固定为"父"，导致高一辈的目标被降一辈并变成男性）。
+      const base = formalAncestor(Array(gen - 1).fill('m').concat([eyg]));
       if (mateG === 'f') return (eyg === 'm' ? '舅' : '姨') + base;
       return (eyg === 'm' ? '叔' : '姑') + base;
     }
@@ -724,6 +759,7 @@ function inlawRestName(mateG, s, rest) {
       const flav = eyg === 'm' ? (fg === 'm' ? '叔' : '舅') : (fg === 'm' ? '姑' : '姨');
       return flav + (eyg === 'm' ? '男' : '女');
     }
+    if (gen <= -2) return formalDescendantAt(gen, eyg);
     if (gen === 1) {
       const t = { 'm,E,m': '伯父', 'm,Y,m': '叔父', 'm,E,f': '姑母', 'm,Y,f': '姑母', 'f,E,m': '舅父', 'f,Y,m': '舅父', 'f,E,f': '姨母', 'f,Y,f': '姨母' };
       return t[fg + ',' + ey + ',' + eyg];
@@ -738,10 +774,12 @@ function inlawRestName(mateG, s, rest) {
         : (fg === 'm' && eyg === 'm') ? '叔'
         : (fg === 'm') ? '姑'
         : (eyg === 'm') ? '舅' : '姨';
-      const baseGs = (s >= 1 ? [mateG] : []).concat(pp.map(g => g.g));
-      let anc = formalAncestor(baseGs);
-      anc = anc.slice(0, -1) + (eyg === 'm' ? '父' : '母');
-      return flav + anc;
+      // 目标在绝对辈分 gen 上：性别序列长度必须为 gen。
+      let seq;
+      if (s >= 1) seq = [mateG].concat(Array(s - 1).fill('m'), pp.map(g => g.g));
+      else seq = pp.map(g => g.g).slice(-gen);
+      seq = seq.slice(0, -1).concat([eyg]);
+      return flav + formalAncestor(seq);
     }
     return '';
   }
@@ -768,12 +806,13 @@ function inlawRestName(mateG, s, rest) {
     }
     if (gen === -1) return cg === 'm' ? '男' : '女';
     if (gen <= -2) {
-      const des = formalDescendant([eyg].concat(rest.slice(1).map(g => g.g)));
+      const seq = [eyg].concat(rest.slice(1).map(g => g.g));
+      const des = formalDescendantSeqAt(gen, seq);
       return { primary: des, alts: cg === 'm' ? [des + '男'] : [] };
     }
     if (gen >= 2) {
       const line = eyg === 'm' ? (mateG === 'f' ? '舅表' : '叔表') : (mateG === 'f' ? '姨表' : '姑表');
-      const lv = formalAncestor(Array(gen - 1).fill('m')).slice(0, -1);
+      const lv = formalAncestor(Array(gen).fill('m')).slice(0, -1);
       if (cg === 'm') return { primary: line + '伯叔' + lv + '父', alts: [line + '伯' + lv + '父', line + '叔' + lv + '父'] };
       return line + '姑' + lv + '母';
     }
@@ -792,6 +831,10 @@ function inlawRestName(mateG, s, rest) {
       const flav = eyg === 'm' ? (fg === 'm' ? '叔' : '舅') : (fg === 'm' ? '姑' : '姨');
       return flav + (cg === 'm' ? '男' : '女');
     }
+    if (gen <= -2) {
+      const seq = [eyg].concat(rest.slice(2).map(g => g.g));
+      return formalDescendantSeqAt(gen, seq);
+    }
     if (gen === 1) {
       if (mateG === 'f') return cg === 'm' ? '堂舅父' : '堂姨母';
       if (cg === 'm') return '堂伯父';
@@ -799,7 +842,7 @@ function inlawRestName(mateG, s, rest) {
     }
     if (gen >= 2) {
       const line = { 'm,m': '叔表', 'm,f': '姑表', 'f,m': '舅表', 'f,f': '姨表' }[fg + ',' + eyg];
-      const lv = formalAncestor(Array(gen - 1).fill('m')).slice(0, -1);
+      const lv = formalAncestor(Array(gen).fill('m')).slice(0, -1);
       if (cg === 'm') return { primary: line + '伯叔' + lv + '父', alts: [line + '伯' + lv + '父', line + '叔' + lv + '父'] };
       return line + '姑' + lv + '母';
     }
@@ -969,6 +1012,11 @@ function nameMateFirst(mg, rest) {
               : { primary: pref + seg + rn, alts: [] };
           }
         }
+        // 重锚失败且 tail 不是“纯 C 链 + 末位 M”时，nameCousinMate 无法处理。
+        if (!(tail.slice(0, -1).every(g => g.t === 'C') && tail[tail.length - 1].t === 'M')) {
+          const tg = priorityOf(rest);
+          return { primary: (mg === 'f' ? '妻' : '夫') + termAtGeneration(tg, rest[rest.length - 1].g), alts: [] };
+        }
       }
       const res = nameCousinMate(rest.slice(0, k), ey, eyg, tail.slice(0, -1), tail[tail.length - 1].g);
       if (k > tail.length - 1) {       // r < 0：岳/公父/婆母 终端插入
@@ -977,8 +1025,8 @@ function nameMateFirst(mg, rest) {
       return { primary: (mg === 'm' ? '夫' : '妻') + res.primary, alts: [] };
     }
   }
-  const inner = nameKm(rest);
-  return { primary: (mg === 'f' ? '岳' : '公') + inner.primary, alts: [] };
+  const tg = priorityOf(rest);
+  return { primary: (mg === 'f' ? '妻' : '夫') + termAtGeneration(tg, rest[rest.length - 1].g), alts: [] };
 }
 
 function nameMateLast(mg, X) {
@@ -1088,19 +1136,38 @@ function nameMateLast(mg, X) {
   if (n === 3 && X[0].t === 'C' && X[1].t === 'M' && (X[2].t === 'E' || X[2].t === 'Y')) {
     return mg === 'f' ? { primary: '姻侄媳', alts: [] } : { primary: '姻侄婿', alts: [] };
   }
-  if (n >= 2 && X[0].t === 'C' && X.some(g => g.t === 'M')) {
+  // 段前缀 + 重锚：X 内含 Mate（不限 X 的首段类型）
+  // 例：父之母之姐之妻之兄 + 妻 → 段前缀“姨祖眷” + 重锚“舅祖母”
+  if (n >= 2 && X.some(g => g.t === 'M')) {
     const ti = X.findIndex(g => g.t === 'M');
-    const seg = inlawSegmentPrefix(X.slice(0, ti), X[ti].g);
-    if (seg) {
-      const s = priorityOf(X.slice(0, ti));
-      const rn = inlawRestName(X[ti].g, s, X.slice(ti + 1).concat([{ t: 'M', g: mg }]));
-      if (rn) return (typeof rn === 'object' && rn !== null) ? { primary: seg + rn.primary, alts: rn.alts.map(a => seg + a) } : { primary: seg + rn, alts: [] };
+    if (ti > 0 && ti < n - 1) {
+      const seg = inlawSegmentPrefix(X.slice(0, ti), X[ti].g);
+      if (seg) {
+        const s = priorityOf(X.slice(0, ti));
+        const rn = inlawRestName(X[ti].g, s, X.slice(ti + 1).concat([{ t: 'M', g: mg }]));
+        if (rn) return (typeof rn === 'object' && rn !== null) ? { primary: seg + rn.primary, alts: rn.alts.map(a => seg + a) } : { primary: seg + rn, alts: [] };
+      }
     }
   }
   const res = nameKm(X);
   const prim = res.primary, alts = res.alts;
   if (/[\u5144\u5f1f\u59d0\u59b9\u59ca]$/.test(prim)) {
     return { primary: prim + (mg === 'f' ? '妇' : '婿'), alts: alts.filter(a => a !== prim).map(a => a + (mg === 'f' ? '妇' : '婿')) };
+  }
+  // 口语兄弟姐妹词 + 配偶：用“嫂子/弟媳/姐夫/妹夫”等替换，而不是“哥哥媳妇/姐姐婿”。
+  const COLLOQUIAL_SIB = { '哥哥': ['E', 'm'], '姐姐': ['E', 'f'], '弟弟': ['Y', 'm'], '妹妹': ['Y', 'f'] };
+  for (const sib of Object.keys(COLLOQUIAL_SIB)) {
+    if (prim.endsWith(sib)) {
+      const ey = COLLOQUIAL_SIB[sib][0], eyg = COLLOQUIAL_SIB[sib][1];
+      const smRes = nameSiblingMate(ey, eyg, mg);
+      const stem = prim.slice(0, -sib.length);
+      const out = smRes.alts.map(a => stem + a);
+      for (const a of alts) {
+        if (a === prim) continue;
+        out.push(a.endsWith(sib) ? stem + smRes.primary : a + (mg === 'f' ? '妇' : '婿'));
+      }
+      return { primary: stem + smRes.primary, alts: [...new Set(out)] };
+    }
   }
   if (prim.endsWith('父')) {
     const sw = a => a.slice(0, -1) + (mg === 'm' ? '父' : '母');
@@ -1113,8 +1180,17 @@ function nameMateLast(mg, X) {
   if (/^(\u53d4\u4f84|\u8205\u4f84|\u59d1\u7525|\u59e8\u7525)/.test(prim) && prim.endsWith('女')) {
     return mg === 'm' ? { primary: prim + '婿', alts: [] } : { primary: prim + '媳', alts: [] };
   }
-  if (prim.endsWith('男')) return { primary: prim.slice(0, -1) + (mg === 'f' ? '妇' : '婿'), alts: [] };
-  if (prim.endsWith('女')) return { primary: prim.slice(0, -1) + (mg === 'm' ? '婿' : '媳'), alts: [] };
+  if (prim.endsWith('男')) {
+    const base = prim.slice(0, -1);
+    // 只有“孙/侄/甥…”这类本身带辈分的词才能省掉“男”。
+    const stem = /[\u5b59\u4f84\u7525\u5b50\u5973]$/.test(base) ? base : prim;
+    return { primary: stem + (mg === 'f' ? '妇' : '婿'), alts: [] };
+  }
+  if (prim.endsWith('女')) {
+    const base = prim.slice(0, -1);
+    const stem = /[\u5b59\u4f84\u7525\u5b50\u5973]$/.test(base) ? base : prim;
+    return { primary: stem + (mg === 'm' ? '婿' : '媳'), alts: [] };
+  }
   if (X[X.length - 1].g === 'm') {
     return mg === 'f' ? { primary: prim + '媳妇', alts: [] } : { primary: prim + '婿', alts: [] };
   }
@@ -1135,24 +1211,32 @@ function nameMateMiddle(gens, i, mg) {
   if (X.length === 1 && X[0].t === 'C' && Y.length === 2 && (Y[0].t === 'E' || Y[0].t === 'Y') && Y[1].t === 'M') {
     return Y[1].g === 'f' ? { primary: '姻侄媳', alts: [] } : { primary: '姻侄婿', alts: [] };
   }
+  const s = priorityOf(X);
   const seg = inlawSegmentPrefix(X, mg);
-  if (seg) {
-    const s = priorityOf(X);
-    const rn = inlawRestName(mg, s, Y);
-    if (rn) {
-      if (typeof rn === 'object' && rn !== null) {
-        return { primary: seg + rn.primary, alts: rn.alts.map(a => seg + a) };
-      }
-      return { primary: seg + rn, alts: [] };
+  const rn = inlawRestName(mg, s, Y);
+  if (seg && rn) {
+    if (typeof rn === 'object' && rn !== null) {
+      return { primary: seg + rn.primary, alts: rn.alts.map(a => seg + a) };
     }
+    return { primary: seg + rn, alts: [] };
   }
-  const px = nameMateLast(mg, X), py = nameKm(Y);
+  const px = nameMateLast(mg, X);
   let stem = px.primary;
   const sufs = ['媳妇', '女婿', '之夫', '之妻', '妻', '夫', '妇', '媳', '婿', '嫂'];
   for (const sf of sufs) {
     if (stem.endsWith(sf)) { stem = stem.slice(0, -sf.length); break; }
   }
-  return { primary: stem + (mg === 'f' ? '眷' : '姻') + py.primary, alts: [] };
+  const prefix = stem + (mg === 'f' ? '眷' : '姻');
+  // 优先用重锚名（已经是目标的绝对辈分）
+  if (rn) {
+    if (typeof rn === 'object' && rn !== null) {
+      return { primary: prefix + rn.primary, alts: rn.alts.map(a => prefix + a) };
+    }
+    return { primary: prefix + rn, alts: [] };
+  }
+  // 最后兜底：按 s + Y 的辈分取通用词，保证辈分/性别不再错位
+  const tg = s + priorityOf(Y);
+  return { primary: prefix + termAtGeneration(tg, Y[Y.length - 1].g), alts: [] };
 }
 
 function nameKm(gens) {
@@ -1198,7 +1282,16 @@ function chainToText(gens) {
   }).join('的');
 }
 
-function nameChain(gens) {
+// 备选名去重，并去掉与主名相同的项（否则页面会出现"堂姑（亦作：堂姑）"）
+function cleanAlternatives(primary, alts) {
+  const out = [];
+  for (const a of alts || []) {
+    if (a && a !== primary && !out.includes(a)) out.push(a);
+  }
+  return out;
+}
+
+function nameChain(gens, egoG) {
   const notes = [];
   for (let i = 0; i < gens.length - 1; i++) {
     const a = gens[i], b = gens[i + 1];
@@ -1218,19 +1311,30 @@ function nameChain(gens) {
     }
   }
   const red = init(gens);
+  // "我"的性别已知时，化简结果里形如 I(g) 的"自己"分支只有在 g 与"我"一致时才成立。
+  // 例如"爸爸的女儿"在"我"为男时只能是姐姐/妹妹，不能是自己。
+  let monos = red.monomials;
+  if (egoG === 'm' || egoG === 'f') {
+    monos = monos.filter(m => !(m.length === 1 && m[0].t === 'I' && m[0].g != null && m[0].g !== egoG));
+    if (!monos.length) monos = [[{ t: 'Z', g: null }]];
+  }
   const entries = [];
   const seen = {};
-  for (const mono of red.monomials) {
+  for (const mono of monos) {
     if (mono.length === 1 && mono[0].t === 'Z') continue;
     const res = nameKm(mono);
     const key = res.primary;
     if (seen[key]) continue;
     seen[key] = true;
-    entries.push({ monomial: mono.map(x => x.t + (x.g || '')).join(''), primary: res.primary, alternatives: res.alts });
+    entries.push({ monomial: mono.map(x => x.t + (x.g || '')).join(''), primary: res.primary, alternatives: cleanAlternatives(res.primary, res.alts) });
+  }
+  if (!entries.length) {
+    notes.length = 0;
+    notes.push('关系链化简为 0：链路内的性别相互矛盾，此关系不成立。');
   }
   return {
     chain: chainToText(gens),
-    formula: red.monomials.map(m => m.map(x => x.t + (x.g || '')).join('')).join(' + '),
+    formula: monos.map(m => m.map(x => x.t + (x.g || '')).join('')).join(' + '),
     entries,
     primary: entries.length ? entries.map(e => e.primary).join(' / ') : '无（此关系不成立）',
     notes
@@ -1293,14 +1397,19 @@ function relateNames(chainA, chainB, egoG, genderA) {
     const res = nameKm(mono);
     if (seen[res.primary]) continue;
     seen[res.primary] = true;
-    entries.push({ monomial: mono.map(x => x.t + (x.g || '')).join(''), primary: res.primary, alternatives: res.alts });
+    entries.push({ monomial: mono.map(x => x.t + (x.g || '')).join(''), primary: res.primary, alternatives: cleanAlternatives(res.primary, res.alts) });
+  }
+  const notes = _scanNotes(full);
+  if (!entries.length) {
+    notes.length = 0;
+    notes.push('关系链化简为 0：链路内的性别相互矛盾，此关系不成立。');
   }
   return {
     chain: chainToText(full),
     formula: red.monomials.map(m => m.map(x => x.t + (x.g || '')).join('')).join(' + '),
     entries,
     primary: entries.length ? entries.map(e => e.primary).join(' / ') : '无（此关系不成立）',
-    notes: _scanNotes(full)
+    notes
   };
 }
 
@@ -1319,6 +1428,8 @@ function relate(chainA, chainB, egoG, genderA) {
   }
   for (const n of rM.notes.concat(rF.notes)) {
     if (notes.includes(n)) continue;
+    // 一种性别下"不成立"，另一种性别下有结果时，不该把失败提示也带上
+    if (entries.length && n.indexOf('关系链化简为 0') === 0) continue;
     notes.push(n);
   }
   return {

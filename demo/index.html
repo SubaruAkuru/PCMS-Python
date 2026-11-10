@@ -86,7 +86,7 @@
   <div class="sub">
     基于亲属代数（P父·C子·M配偶·E兄姐·Y弟妹）的呼称计算。<b>支持同性婚姻</b>，
     异性婚姻命名与 <code>python3-relationship</code> 库拟合（拟构世代前缀改用"曾/外曾"长链）。
-    可保存变量、计算任意两人之间的称呼。规则详见《亲属称谓命名方案.md》与《命名规则.md》。
+    可保存变量、计算任意两人之间的称呼。规则详见仓库根目录的《亲属称呼手册》。
   </div>
 
   <div class="card">
@@ -237,6 +237,12 @@ function genderOf(chain) {
 
 function hanFor(g) { return CHAIN_HAN[g.t][g.g]; }
 
+function escHTML(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[ch]);
+}
+
 function chainHTML(gens) {
   if (!gens.length) return '';
   return gens.map((g, i) =>
@@ -254,17 +260,22 @@ function showQuickResult() {
     return;
   }
   els.quickChain.innerHTML = chainHTML(state.quick);
-  const r = nameChain(state.quick);
+  const eg = egoGender();
+  const r = nameChain(state.quick, eg);
   els.quickResult.innerHTML = r.primary +
     (r.entries.length === 1 && r.entries[0].alternatives.length
       ? `<span class="alt">亦作：${r.entries[0].alternatives.join('、')}</span>` : '');
   els.quickMeta.style.display = 'block';
   els.quickMeta.innerHTML = `<b>关系链：</b>${r.chain}<br><b>化简公式：</b>${r.formula || '0'}`;
-  if (r.notes.length) {
+  const notes = r.notes.slice();
+  if (eg && r.entries.length === 0) {
+    notes.push(`按当前"我"的性别（${eg === 'm' ? '男' : '女'}）设置，化简后没有成立的分支。`);
+  }
+  if (notes.length) {
     els.quickNotes.style.display = 'block';
-    const sameSex = r.notes.some(n => n.indexOf('同性婚姻') === 0);
+    const sameSex = notes.some(n => n.indexOf('同性婚姻') === 0);
     els.quickNotes.className = 'note' + (sameSex ? ' same-sex' : '');
-    els.quickNotes.innerHTML = r.notes.join('<br>');
+    els.quickNotes.innerHTML = notes.join('<br>');
   } else {
     els.quickNotes.style.display = 'none';
   }
@@ -272,13 +283,11 @@ function showQuickResult() {
 
 function showVarChain() {
   const base = els.varBase.value;
-  const baseFull = base === '我' ? [] : (state.vars.get(base) || { full: [] }).full;
-  const all = baseFull.concat(state.varRel);
-  if (!all.length) {
+  if (!state.varRel.length) {
     els.varChain.innerHTML = '（这里会显示：变量 ＝ 谁 的 关系链）';
   } else {
     els.varChain.innerHTML =
-      `<span class="zh">${base === '我' ? '我' : base}</span><span class="zh">的</span>` +
+      `<span class="zh">${base === '我' ? '我' : escHTML(base)}</span><span class="zh">的</span>` +
       chainHTML(state.varRel);
   }
   els.varSaveHint.textContent = state.varRel.length
@@ -319,10 +328,10 @@ function renderVarList() {
     return;
   }
   els.varList.innerHTML = [...state.vars.entries()].map(([name, v]) =>
-    `<span class="var-item"><b>${name}</b> ＝ ${v.base === '我' ? '我' : v.base}的` +
+    `<span class="var-item"><b>${escHTML(name)}</b> ＝ ${v.base === '我' ? '我' : escHTML(v.base)}的` +
     chainHTML(v.rel) +
     ` <span class="kv">（${chainToText(v.full) || '我'}）</span>` +
-    `<button data-del="${name}" title="删除">✕</button></span>`
+    `<button data-del="${escHTML(name)}" title="删除">✕</button></span>`
   ).join('');
 }
 
@@ -368,11 +377,17 @@ function showRelateResult(r) {
 function runRelate() {
   const d = els.dir.value;
   const nameA = els.selA.value, nameB = els.selB.value;
+  if (nameA === nameB) {
+    // 同一个人称呼自己：直接给"自己"，避免逆链复合把配偶分支也带出来
+    state.lastRelate = { d, nameA, nameB };
+    showRelateResult(relate([], [], egoGender(), null));
+    return;
+  }
   const fullA = nameA === '我' ? [] : (state.vars.get(nameA) || { full: [] }).full;
   const fullB = nameB === '我' ? [] : (state.vars.get(nameB) || { full: [] }).full;
   const ga = nameA === '我' ? egoGender() : genderOf(fullA);
   let r;
-  if (d === 'me2x') r = relate([], fullB, egoGender(), null);
+  if (d === 'me2x') r = relate([], fullB, egoGender(), egoGender());
   else if (d === 'x2me') r = relate(fullA, [], egoGender(), ga);
   else r = relate(fullA, fullB, egoGender(), ga);
   state.lastRelate = { d, nameA, nameB };
@@ -382,7 +397,10 @@ function runRelate() {
 /* ------------------------------ 事件 ------------------------------ */
 
 document.querySelectorAll('input[name=egoG]').forEach(rd => {
-  rd.addEventListener('change', () => { if (state.lastRelate) runRelate(); });
+  rd.addEventListener('change', () => {
+    if (state.quick.length) showQuickResult();
+    if (state.lastRelate) runRelate();
+  });
 });
 
 function wireBuilder(btnsId, undoId, clearId, chainRef, display) {
@@ -404,6 +422,7 @@ els.varName.addEventListener('input', showVarChain);
 document.getElementById('varSave').addEventListener('click', () => {
   const name = els.varName.value.trim();
   if (!name) { alert('请先输入变量名字'); els.varName.focus(); return; }
+  if (name === '我') { alert('“我”是保留名，请换一个名字'); els.varName.focus(); return; }
   if (state.vars.has(name)) { alert('该名字已存在，请换一个'); return; }
   if (!state.varRel.length) { alert('请先点选关系链（至少一位亲属）'); return; }
   const base = els.varBase.value;
@@ -419,11 +438,25 @@ els.varList.addEventListener('click', ev => {
   const b = ev.target.closest('button[data-del]');
   if (!b) return;
   const name = b.dataset.del;
-  // 若其他变量以此为基准，一并删除
-  for (const [k, v] of state.vars) {
-    if (v.base === name) state.vars.delete(k);
+  // 以被删变量为基准的变量（包括间接依赖）一并删除，避免留下找不到基准的悬空变量
+  const victims = new Set([name]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [k, v] of state.vars) {
+      if (!victims.has(k) && victims.has(v.base)) { victims.add(k); grew = true; }
+    }
   }
-  state.vars.delete(name);
+  for (const k of victims) state.vars.delete(k);
+  if (victims.size > 1) {
+    alert('已同时删除依赖它的变量：' + [...victims].filter(k => k !== name).join('、'));
+  }
+  if (state.lastRelate && (victims.has(state.lastRelate.nameA) || victims.has(state.lastRelate.nameB))) {
+    state.lastRelate = null;
+    els.relateResult.textContent = '—';
+    els.relateMeta.style.display = 'none';
+    els.relateNotes.style.display = 'none';
+  }
   refreshBaseAndPersons();
 });
 
