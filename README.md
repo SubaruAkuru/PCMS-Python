@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  特别感谢：mumuy/relationship<br>
+  Special Thanks: mumuy/relationship
+</p>
+
+<p align="center">
   用关系代数、十三条公理与形式语法，生成任意深度的中文亲属称呼。<br>
   An axiom-based kinship algebra and Chinese kinship-term generator.
 </p>
