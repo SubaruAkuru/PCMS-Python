@@ -43,8 +43,19 @@
     font-size: 28px; font-weight: 700; color: var(--accent); line-height: 1.5;
   }
   .result-name .alt { font-size: 14px; font-weight: 400; color: var(--muted); margin-left: 10px; }
-  .kv { font-size: 13.5px; color: var(--muted); line-height: 1.8; }
+  .kv { font-size: 13.5px; color: var(--muted); line-height: 1.8; overflow-wrap: anywhere; }
   .kv b { color: var(--ink); font-weight: 600; }
+  .meta-line { margin: 0 0 4px; }
+  .meta-formula {
+    font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+    font-size: .95em;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+  .meta-chain { overflow-wrap: anywhere; word-break: break-word; }
+  .chain-help {
+    margin-top: 8px; padding-left: 10px; border-left: 3px solid var(--line);
+  }
   .note {
     margin-top: 10px; font-size: 13px; color: var(--accent2);
     background: #eef6f0; border-radius: 8px; padding: 8px 12px; line-height: 1.7;
@@ -115,6 +126,12 @@
       <button class="ctl" id="quickClear">清空</button>
     </div>
     <div class="chain-box" id="quickChain">（从上面的按钮开始点选，例如：父 → 母 → 兄）</div>
+    <div class="hint chain-help">
+      <b>关系链</b>：从「我」开始，按“的”依次读的一串关系；例如“父 → 母 → 兄”读作“父亲的母亲的哥哥”。
+      长链会自动换行。<br>
+      <b>化简公式</b>：同一个关系的代数写法，<code>P</code> 父、<code>C</code> 子、<code>M</code> 配偶、
+      <code>E</code> 兄姐、<code>Y</code> 弟妹；公式中的 <code>+</code> 表示“或者”。
+    </div>
     <div class="result-name" id="quickResult">—</div>
     <div class="kv" id="quickMeta" style="display:none"></div>
     <div class="note" id="quickNotes" style="display:none"></div>
@@ -173,6 +190,10 @@
       <span>称呼</span>
       <select id="selB" class="person"></select>
       <button class="big-btn" id="relateBtn">计算</button>
+    </div>
+    <div class="hint">
+      关系链表示“从称呼人出发，到被称呼人”的完整路径；化简公式是同一路径的代数写法。
+      长链和公式都会自动换行。
     </div>
     <div class="result-name" id="relateResult">—</div>
     <div class="kv" id="relateMeta" style="display:none"></div>
@@ -251,6 +272,11 @@ function chainHTML(gens) {
   ).join('');
 }
 
+function metaHTML(chain, formula) {
+  return `<div class="meta-line"><b>关系链：</b><span class="meta-chain">${escHTML(chain || '（空）')}</span></div>` +
+    `<div class="meta-line"><b>化简公式：</b><span class="meta-formula">${escHTML(formula || '0')}</span></div>`;
+}
+
 function showQuickResult() {
   if (!state.quick.length) {
     els.quickChain.innerHTML = '（从上面的按钮开始点选，例如：父 → 母 → 兄）';
@@ -266,7 +292,7 @@ function showQuickResult() {
     (r.entries.length === 1 && r.entries[0].alternatives.length
       ? `<span class="alt">亦作：${r.entries[0].alternatives.join('、')}</span>` : '');
   els.quickMeta.style.display = 'block';
-  els.quickMeta.innerHTML = `<b>关系链：</b>${r.chain}<br><b>化简公式：</b>${r.formula || '0'}`;
+  els.quickMeta.innerHTML = metaHTML(r.chain, r.formula);
   const notes = r.notes.slice();
   if (eg && r.entries.length === 0) {
     notes.push(`按当前"我"的性别（${eg === 'm' ? '男' : '女'}）设置，化简后没有成立的分支。`);
@@ -359,7 +385,7 @@ function refreshDirUI() {
 function showRelateResult(r) {
   els.relateResult.innerHTML = r.primary;
   els.relateMeta.style.display = 'block';
-  els.relateMeta.innerHTML = `<b>关系链：</b>${r.chain || '（空）'}<br><b>化简公式：</b>${r.formula || '0'}`;
+  els.relateMeta.innerHTML = metaHTML(r.chain, r.formula);
   const notes = r.notes.slice();
   if (egoGender() === null && r.ambiguous) {
     notes.unshift('"我"的性别未设置：以上为按男、女两种可能合并的结果（若设置性别，结果将收窄）。');

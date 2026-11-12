@@ -665,11 +665,26 @@ function inlawSegmentPrefix(X, mg) {
   return null;
 }
 
+function stripMateSuffix(s) {
+  for (const suf of ['媳妇', '女婿', '之夫', '之妻',
+                     '妻', '夫', '妇', '媳', '婿', '嫂', '母', '父']) {
+    if (s.endsWith(suf) && s.length > suf.length) return s.slice(0, -suf.length);
+  }
+  return s;
+}
+
+function genericSegmentPrefix(X, mg) {
+  if (!X.length) return null;
+  const px = nameMateLast(mg, X);
+  if (!px || !px.primary || px.primary === '无') return null;
+  return stripMateSuffix(px.primary) + (mg === 'f' ? '眷' : '姻');
+}
+
 /* 重锚命名 */
-function inlawRestName(mateG, s, rest) {
+function inlawRestName(mateG, s, rest, fallback = false) {
   if (!rest.length) return '';
   if (rest.length >= 2 && rest[rest.length - 1].t === 'M') {
-    const raw = inlawRestName(mateG, s, rest.slice(0, -1));
+    const raw = inlawRestName(mateG, s, rest.slice(0, -1), fallback);
     if (!raw) return '';
     const m2 = rest[rest.length - 1].g;
     const suf = m2 === 'f' ? '妇' : '婿';
@@ -696,10 +711,11 @@ function inlawRestName(mateG, s, rest) {
   const mi = rest.findIndex(g => g.t === 'M');
   if (mi > 0 && mi < rest.length - 1) {
     const X2 = rest.slice(0, mi), mg2 = rest[mi].g, Y2 = rest.slice(mi + 1);
-    const seg2 = inlawSegmentPrefix(X2, mg2);
+    let seg2 = inlawSegmentPrefix(X2, mg2);
+    if (!seg2) seg2 = genericSegmentPrefix(X2, mg2);
     if (seg2) {
       const s2 = s + priorityOf(X2);
-      const r2 = inlawRestName(mg2, s2, Y2);
+      const r2 = inlawRestName(mg2, s2, Y2, true);
       if (r2) {
         if (typeof r2 === 'object' && r2 !== null) {
           return { primary: seg2 + r2.primary, alts: r2.alts.map(a => seg2 + a) };
@@ -818,6 +834,25 @@ function inlawRestName(mateG, s, rest) {
     }
     return '';
   }
+  if (rest.length >= 4 && rest[0].t === 'P') {
+    const ei = rest.findIndex(g => g.t === 'E' || g.t === 'Y');
+    if (ei >= 2 && rest.slice(0, ei).every(g => g.t === 'P') &&
+        rest.length > ei + 1 && rest.slice(ei + 1).every(g => g.t === 'C')) {
+      const pp = rest.slice(0, ei), cs = rest.slice(ei + 1);
+      const ey = rest[ei].t, eyg = rest[ei].g;
+      const k = pp.length, j = cs.length;
+      const gen = s + k - j;
+      const k2 = gen + j;          // = s + k
+      if (k2 >= 1 && k2 <= k) {
+        const named = nameCousinLine(pp.slice(-k2), ey, eyg, cs);
+        if (named) return named;
+      } else if (gen <= -1) {
+        // 目标落到平辈以下：至少给出目标绝对辈分的后代词，
+        // 避免外层丢掉内层段前缀（如“侄姻孙”应为“侄姻甥外孙眷孙”）。
+        return termAtGeneration(gen, cs[cs.length - 1].g);
+      }
+    }
+  }
   if (rest.length >= 3 && rest[0].t === 'P' && (rest[1].t === 'E' || rest[1].t === 'Y') &&
       rest.slice(2).every(g => g.t === 'C')) {
     const fg = rest[0].g, eyg = rest[1].g, cg = rest[rest.length - 1].g;
@@ -847,6 +882,9 @@ function inlawRestName(mateG, s, rest) {
       return line + '姑' + lv + '母';
     }
     return '';
+  }
+  if (fallback && rest[rest.length - 1].t !== 'M') {
+    return termAtGeneration(s + priorityOf(rest), rest[rest.length - 1].g);
   }
   return '';
 }
@@ -1212,7 +1250,7 @@ function nameMateMiddle(gens, i, mg) {
     return Y[1].g === 'f' ? { primary: '姻侄媳', alts: [] } : { primary: '姻侄婿', alts: [] };
   }
   const s = priorityOf(X);
-  const seg = inlawSegmentPrefix(X, mg);
+  const seg = inlawSegmentPrefix(X, mg) || genericSegmentPrefix(X, mg);
   const rn = inlawRestName(mg, s, Y);
   if (seg && rn) {
     if (typeof rn === 'object' && rn !== null) {
@@ -1226,7 +1264,7 @@ function nameMateMiddle(gens, i, mg) {
   for (const sf of sufs) {
     if (stem.endsWith(sf)) { stem = stem.slice(0, -sf.length); break; }
   }
-  const prefix = stem + (mg === 'f' ? '眷' : '姻');
+  const prefix = seg ? seg : (stem + (mg === 'f' ? '眷' : '姻'));
   // 优先用重锚名（已经是目标的绝对辈分）
   if (rn) {
     if (typeof rn === 'object' && rn !== null) {

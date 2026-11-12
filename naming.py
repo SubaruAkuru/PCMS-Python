@@ -1223,17 +1223,47 @@ def _inlaw_segment_prefix(X, mg):
     return None
 
 
+def _strip_mate_suffix(s):
+    """去掉配偶名的后缀，得到可加眷/姻的词干。"""
+    for suf in ('媳妇', '女婿', '之夫', '之妻',
+                '妻', '夫', '妇', '媳', '婿', '嫂', '母', '父'):
+        if s.endswith(suf) and len(s) > len(suf):
+            return s[:-len(suf)]
+    return s
+
+
+def _generic_segment_prefix(X, mg):
+    """段前缀表的兜底：用 X 的配偶名反推词干，再补眷/姻。
+
+    深链（如 P^4 E C 的配偶）不在有限段前缀表里时，有限表会返回 None。
+    嵌套重锚若因此直接放弃，会丢掉整段路径；这里给出一个机械但完整的
+    段前缀，保证“seg + rname”仍可拼接。
+    """
+    if not X:
+        return None
+    prim, _ = name_mate_last(mg, X)
+    if not prim or prim == '无':
+        return None
+    stem = _strip_mate_suffix(prim)
+    return stem + ('眷' if mg == FEMALE else '姻')
+
+
 def _rest_primary(rname):
     return rname[0] if isinstance(rname, tuple) else rname
 
 
-def _inlaw_rest_name(mate_g, s, rest):
-    """重锚命名：配偶的亲属余链 rest，配偶在 s 代（相对我）。"""
+def _inlaw_rest_name(mate_g, s, rest, fallback=False):
+    """重锚命名：配偶的亲属余链 rest，配偶在 s 代（相对我）。
+
+    fallback=True 时，未覆盖形状返回绝对辈分通用词；嵌套重锚必须这样，
+    否则内层返回空会让外层丢掉整段路径。顶层配偶开头/中间由外层兜底，
+    保持 fallback=False，避免改变已有的顶层通用词结果。
+    """
     if not rest:
         return ''
     # 尾部带配偶：+妇/+婿（如 叔兄妇/孙妇）
     if len(rest) >= 2 and isinstance(rest[-1], Mate):
-        raw = _inlaw_rest_name(mate_g, s, rest[:-1])
+        raw = _inlaw_rest_name(mate_g, s, rest[:-1], fallback=fallback)
         if not raw:
             return ''
         suf = '妇' if rest[-1].gender == FEMALE else '婿'
@@ -1272,9 +1302,11 @@ def _inlaw_rest_name(mate_g, s, rest):
         Y2 = list(rest[ti + 1:])
         if X2:
             seg2 = _inlaw_segment_prefix(X2, mg2)
+            if not seg2:
+                seg2 = _generic_segment_prefix(X2, mg2)
             if seg2:
                 s2 = s + priority(KinMonomial(X2))
-                rname2 = _inlaw_rest_name(mg2, s2, Y2)
+                rname2 = _inlaw_rest_name(mg2, s2, Y2, fallback=True)
                 if rname2:
                     if isinstance(rname2, tuple):
                         return seg2 + rname2[0], [seg2 + a for a in rname2[1]]
@@ -1417,7 +1449,38 @@ def _inlaw_rest_name(mate_g, s, rest):
                     [line + '伯' + lv + '父', line + '叔' + lv + '父']
             return line + '姑' + lv + '母', []
         return ''
-    # ---- 配偶伯叔姑舅姨的子女（P + E/Y + C^j）----
+    # ---- 配偶的 P^k E/Y C^j（k>=2，深层堂表支）----
+    # 旧实现只处理 k=1（下一分支）和 k>=3 的纯旁系，漏掉了
+    # P^k E/Y C^j（k>=2）作为“重锚余链”的情形。此时嵌套重锚会失败，
+    # 外层退到 9.5 的 term_at_generation，得到“堂眷母”这类过短结果。
+    # 目标绝对辈分 g = s + k - j；若只需 g+j 个 P 就能表达目标，
+    # 取最近的 k2 = g+j 个 P，再套 6.3/6.4 的堂表支命名。
+    if len(rest) >= 4 and isinstance(rest[0], Parent):
+        ei = next((i for i, g in enumerate(rest)
+                   if isinstance(g, (Elder, Younger))), None)
+        if ei is not None and ei >= 2 \
+                and all(isinstance(g, Parent) for g in rest[:ei]) \
+                and len(rest) > ei + 1 \
+                and all(isinstance(g, Child) for g in rest[ei + 1:]):
+            pp = list(rest[:ei])
+            cs = list(rest[ei + 1:])
+            ey = 'E' if isinstance(rest[ei], Elder) else 'Y'
+            eyg = rest[ei].gender
+            k = len(pp)
+            j = len(cs)
+            gen = s + k - j
+            k2 = gen + j          # = s + k
+            if 1 <= k2 <= k:
+                pp2 = pp[-k2:]
+                named = name_cousin_line(pp2, ey, eyg, cs)
+                if named:
+                    return named
+            elif gen <= -1:
+                # 目标落到平辈以下：无法再用“第 k2 代堂表支”表达，
+                # 但至少要给出目标绝对辈分的后代词，避免返回空后
+                # 外层丢掉内层段前缀（如“侄姻孙”应为“侄姻甥外孙眷孙”）。
+                return _term_at_generation(gen, cs[-1].gender)
+    # ---- 配偶的 P E/Y C^j（k=1，配偶的堂表亲）----
     if len(rest) >= 3 and isinstance(rest[0], Parent) \
             and isinstance(rest[1], (Elder, Younger)) \
             and all(isinstance(g, Child) for g in rest[2:]):
@@ -1453,6 +1516,11 @@ def _inlaw_rest_name(mate_g, s, rest):
                     [line + '伯' + lv + '父', line + '叔' + lv + '父']
             return line + '姑' + lv + '母', []
         return ''
+    # 余链形状未覆盖：嵌套重锚时至少给出目标绝对辈分的通用词，
+    # 避免返回空后外层只拼第一段、丢掉内层段前缀。
+    if fallback and not isinstance(rest[-1], Mate):
+        return _term_at_generation(s + priority(KinMonomial(rest)),
+                                   rest[-1].gender)
     return ''
 
 
@@ -1478,6 +1546,8 @@ def name_mate_middle(gens, i, mg):
     # 姻/眷 体系
     s = priority(KinMonomial(X))
     seg = _inlaw_segment_prefix(X, mg)
+    if not seg:
+        seg = _generic_segment_prefix(X, mg)
     rname = _inlaw_rest_name(mg, s, Y)
     if seg and rname:
         if isinstance(rname, tuple):
@@ -1495,7 +1565,7 @@ def name_mate_middle(gens, i, mg):
             if stem.endswith(suf):
                 stem = stem[:-1]
                 break
-    prefix = stem + ('眷' if mg == FEMALE else '姻')
+    prefix = seg if seg else (stem + ('眷' if mg == FEMALE else '姻'))
     # 优先用重锚名（已经是目标的绝对辈分）
     if rname:
         if isinstance(rname, tuple):
